@@ -59,7 +59,14 @@ After the script completes it will output a JSON string. Copy it into the Server
 
 Both the VPN Client and Server Manager automatically check this repo for new releases on startup. When a new version is available you will see an in-app notification with a link to the release page.
 
+**To publish an update:**
+1. Build the new installer
+2. Create a GitHub Release with the correct tag:
+   - VPN Client: tag `client-v2.0.1` (version must match the version in `package.json`)
+   - Server Manager: tag `sm-v2.0.1`
+3. Attach the installer `.exe` to the release
+4. All running clients will be notified on their next launch
 
 ## License
 
-ETCMCv2 VPN is a Heavy Modified Version, based on [Outline VPN] licensed under the Apache License 2.0.
+ETCMCv2 VPN is based on [Outline VPN](https://getoutline.org) by Jigsaw, licensed under the Apache License 2.0.
