@@ -8,7 +8,7 @@ Get the latest installers from the [Releases](https://github.com/Nowalski/ETCMCv
 
 | Software | Tag Format | Description |
 |---|---|---|
-| VPN Client | `client-v2.0.x` | Windows VPN client (Outline-based, NFT gated) |
+| VPN Client | `client-v2.0.x` | Windows VPN client, NFT gated) |
 | Server Manager | `sm-v2.0.x` | Windows app to deploy & manage your VPN server |
 
 ## How to Use
