@@ -40,7 +40,7 @@ bash <(curl -sSL https://raw.githubusercontent.com/Nowalski/ETCMCv2_VPN_Software
 
 After the script completes it will output a JSON string. Copy it into the Server Manager under **Add a server**.
 
-to Manage the Server on ur VM a Manage Server was madee
+to Manage the Server on ur VM a Manage Server Script was made
 
 ```bash
 bash <(curl -sSL https://raw.githubusercontent.com/Nowalski/ETCMCv2_VPN_Software/main/manage.sh)
