@@ -37,8 +37,14 @@ If you want to set up a VPN server on your own Linux machine without using the S
 bash <(curl -sSL https://raw.githubusercontent.com/Nowalski/ETCMCv2_VPN_Software/main/install_server.sh)
 ```
 
+
 After the script completes it will output a JSON string. Copy it into the Server Manager under **Add a server**.
 
+to Manage the Server on ur VM a Manage Server was madee
+
+```bash
+bash <(curl -sSL https://raw.githubusercontent.com/Nowalski/ETCMCv2_VPN_Software/main/manage.sh)
+```
 ## Requirements
 
 ### VPN Client
