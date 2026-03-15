@@ -27,9 +27,6 @@
 # SB_DEFAULT_SERVER_NAME: Default name for this server, e.g. "ETCMCv2 VPN server New York".
 #     This name will be used for the server until the admins updates the name
 #     via the REST API.
-# SENTRY_LOG_FILE: File for writing logs which may be reported to Sentry, in case
-#     of an install error. No PII should be written to this file. Intended to be set
-#     only by do_install_server.sh.
 # WATCHTOWER_REFRESH_SECONDS: refresh interval in seconds to check for updates,
 #     defaults to 3600.
 #
@@ -51,7 +48,8 @@ Usage: install_server.sh [--hostname <hostname>] [--api-port <port>] [--keys-por
 EOF
 }
 
-readonly SENTRY_LOG_FILE=${SENTRY_LOG_FILE:-}
+# NOTE: Outline's Sentry error reporting is intentionally not used here.
+# This script is run standalone — no external log upload occurs.
 
 # I/O conventions for this script:
 # - Ordinary status messages are printed to STDOUT
@@ -75,7 +73,6 @@ function log_error() {
   echo "$1" >> "${FULL_LOG}"
 }
 
-# Pretty prints text to stdout, and also writes to sentry log file if set.
 function log_start_step() {
   log_for_sentry "$@"
   local -r str="> $*"
@@ -117,9 +114,7 @@ function command_exists {
 }
 
 function log_for_sentry() {
-  if [[ -n "${SENTRY_LOG_FILE}" ]]; then
-    echo "[$(date "+%Y-%m-%d@%H:%M:%S")] install_server.sh" "$@" >> "${SENTRY_LOG_FILE}"
-  fi
+  # Writes to the local install log only — no external reporting.
   echo "$@" >> "${FULL_LOG}"
 }
 
@@ -293,7 +288,8 @@ function write_config() {
     config+=("\"name\": \"$(escape_json_string "${SB_DEFAULT_SERVER_NAME}")\"")   
   fi
   config+=("\"hostname\": \"$(escape_json_string "${PUBLIC_HOSTNAME}")\"")
-  config+=("\"metricsEnabled\": ${SB_METRICS_ENABLED:-false}")
+  # metricsEnabled hardcoded to false — prevents reporting to shadowbox-metrics.getoutline.com
+  config+=("\"metricsEnabled\": false")
   echo "{$(join , "${config[@]}")}" > "${STATE_DIR}/shadowbox_server_config.json"
 }
 
@@ -357,9 +353,11 @@ EOF
 }
 
 function start_watchtower() {
-  # Start watchtower to automatically fetch docker image updates.
-  # Set watchtower to refresh every 30 seconds if a custom SB_IMAGE is used (for
-  # testing).  Otherwise refresh every hour.
+  # Start watchtower to automatically fetch Shadowbox image updates from quay.io/outline.
+  # NOTE: ETCMCv2's upstream image updates are safe because metricsEnabled is hardcoded
+  # to false in shadowbox_server_config.json — that config file is mounted into the
+  # container and overrides any image-level defaults. Auto-updates provide security
+  # patches without risk of telemetry being re-enabled.
   local -ir WATCHTOWER_REFRESH_SECONDS="${WATCHTOWER_REFRESH_SECONDS:-3600}"
   local -ar docker_watchtower_flags=(--name watchtower --log-driver local --restart always \
       -v /var/run/docker.sock:/var/run/docker.sock)
