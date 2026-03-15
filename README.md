@@ -51,6 +51,28 @@ bash <(curl -sSL https://raw.githubusercontent.com/Nowalski/ETCMCv2_VPN_Software
 - Windows 10 / 11 (64-bit)
 - Admin rights (needed to install the VPN service and TAP adapter on first run)
 - An ETC wallet with a valid VPNLicense NFT
+- Layer 1 Existing Reworked,
+All DNS requests are forced through the tunnel and use security-focused resolvers
+
+• Quad9 (9.9.9.9) – blocks malware, phishing, botnets, and C2 domains
+• Cloudflare Family (1.1.1.3) – blocks malware and adult content
+
+This automatically prevents connections to a large number of known abuse domains.
+
+Layer 2 NEW  Automatic traffic filtering
+When the VPN connects, the client temporarily applies Windows Firewall rules that block common abuse traffic such as:
+
+• SMTP ports (prevents spam relays)
+• BitTorrent / P2P ports
+• IRC botnet channels
+• SOCKS proxy abuse
+
+These rules are automatically removed when the VPN disconnects.
+
+Layer 3 NEW  Domain blocking
+The client also temporarily blocks a number of well-known torrent trackers and piracy index sites through a hosts file filter.
+
+This creates a first layer of protection for server operators before traffic even leaves the client.
 
 ### Server Manager
 - Windows 10 / 11
