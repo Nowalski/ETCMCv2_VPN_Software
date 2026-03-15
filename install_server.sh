@@ -302,7 +302,7 @@ function start_shadowbox() {
   # rather than pass in the environment.
   local -r START_SCRIPT="${STATE_DIR}/start_container.sh"
   cat <<-EOF > "${START_SCRIPT}"
-# This script starts the Outline server container ("Shadowbox").
+# This script starts the ETCMCv2 server container ("Shadowbox").
 # If you need to customize how the server is run, you can edit this script, then restart with:
 #
 #     "${START_SCRIPT}"
@@ -341,7 +341,7 @@ docker_command=(
   # Where to report metrics to, if opted-in.
   -e "SB_METRICS_URL=${SB_METRICS_URL:-}"
 
-  # The Outline server image to run.
+  # The ETCMCv2 server image to run.
   "${SB_IMAGE}"
 )
 "\${docker_command[@]}"
@@ -442,6 +442,56 @@ function set_hostname() {
   return 1
 }
 
+# Applies iptables rules to block abuse traffic exiting from this VPN server.
+# Rules are added to the FORWARD chain (traffic routed through the server)
+# and survive container restarts. Re-running is idempotent via -C checks.
+function apply_etcmc_firewall_rules() {
+  # Require iptables
+  if ! command_exists iptables; then
+    log_error "iptables not found — skipping abuse-prevention rules"
+    return 0
+  fi
+
+  # Helper: add rule only if it doesn't already exist
+  function add_rule() {
+    iptables -C "$@" 2>/dev/null || iptables -A "$@"
+  }
+
+  # ── Block outbound SMTP (spam relay) ───────────────────────────────────────
+  add_rule FORWARD -p tcp --dport 25   -j DROP
+  add_rule FORWARD -p tcp --dport 465  -j DROP
+  add_rule FORWARD -p tcp --dport 587  -j DROP
+
+  # ── Block BitTorrent peer ports ────────────────────────────────────────────
+  add_rule FORWARD -p tcp --dport 6881:6889 -j DROP
+  add_rule FORWARD -p udp --dport 6881:6889 -j DROP
+  # BitTorrent tracker
+  add_rule FORWARD -p tcp --dport 6969 -j DROP
+  add_rule FORWARD -p udp --dport 6969 -j DROP
+
+  # ── Block eMule / eDonkey P2P ──────────────────────────────────────────────
+  add_rule FORWARD -p tcp --dport 4662 -j DROP
+  add_rule FORWARD -p udp --dport 4672 -j DROP
+
+  # ── Block Gnutella / LimeWire ──────────────────────────────────────────────
+  add_rule FORWARD -p tcp --dport 6346 -j DROP
+  add_rule FORWARD -p tcp --dport 6347 -j DROP
+
+  # ── Block IRC (common botnet C2) ───────────────────────────────────────────
+  add_rule FORWARD -p tcp --dport 6667 -j DROP
+  add_rule FORWARD -p tcp --dport 6668 -j DROP
+  add_rule FORWARD -p tcp --dport 6669 -j DROP
+  add_rule FORWARD -p tcp --dport 6697 -j DROP
+
+  # ── Persist rules across reboots ──────────────────────────────────────────
+  if command_exists iptables-save && command_exists netfilter-persistent; then
+    netfilter-persistent save >/dev/null 2>&1 || true
+  elif command_exists iptables-save; then
+    # Fallback: save to standard location used by iptables-restore on boot
+    iptables-save > /etc/iptables/rules.v4 2>/dev/null || true
+  fi
+}
+
 install_shadowbox() {
   local MACHINE_TYPE
   MACHINE_TYPE="$(uname -m)"
@@ -500,6 +550,7 @@ install_shadowbox() {
   run_step "Starting Shadowbox" start_shadowbox
   # TODO(fortuna): Don't wait for Shadowbox to run this.
   run_step "Starting Watchtower" start_watchtower
+  run_step "Applying ETCMCv2 abuse-prevention firewall rules" apply_etcmc_firewall_rules
 
   readonly PUBLIC_API_URL="https://${PUBLIC_HOSTNAME}:${API_PORT}/${SB_API_PREFIX}"
   readonly LOCAL_API_URL="https://localhost:${API_PORT}/${SB_API_PREFIX}"
