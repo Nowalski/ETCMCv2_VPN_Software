@@ -506,6 +506,14 @@ install_shadowbox() {
   run_step "Verifying that Docker is installed" verify_docker_installed
   run_step "Verifying that Docker daemon is running" verify_docker_running
 
+  # Prompt for a custom server name unless already set via environment variable.
+  if [[ -z "${SB_DEFAULT_SERVER_NAME:-}" ]]; then
+    echo -n "> Enter a name for this server (e.g. \"ETCMCv2 VPN Switzerland\") [ETCMCv2 VPN Server]: "
+    read -r SB_DEFAULT_SERVER_NAME
+    SB_DEFAULT_SERVER_NAME="${SB_DEFAULT_SERVER_NAME:-ETCMCv2 VPN Server}"
+  fi
+  export SB_DEFAULT_SERVER_NAME
+
   log_for_sentry "Creating ETCMCv2 directory"
   export SHADOWBOX_DIR="${SHADOWBOX_DIR:-/opt/etcmc}"
   mkdir -p "${SHADOWBOX_DIR}"
