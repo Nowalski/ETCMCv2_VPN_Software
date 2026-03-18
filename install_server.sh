@@ -440,52 +440,148 @@ function set_hostname() {
   return 1
 }
 
-# Applies iptables rules to block abuse traffic exiting from this VPN server.
-# Rules are added to the FORWARD chain (traffic routed through the server)
-# and survive container restarts. Re-running is idempotent via -C checks.
+# ─── Blocking Profile ──────────────────────────────────────────────────────────
+#
+# ETCMCv2 supports three server-side blocking profiles.  The chosen profile is
+# saved to /etc/etcmc-vpn/config so re-runs do NOT overwrite it unless the
+# admin explicitly changes it.
+#
+# light   — DNS filtering only (Quad9 + Cloudflare).  Torrenting/P2P allowed.
+# medium  — SMTP + SOCKS blocked.  Torrenting/P2P still allowed.
+# hard    — Full block: SMTP, BitTorrent, P2P, IRC, SOCKS.  (default)
+#
+readonly ETCMC_CONFIG_DIR="/etc/etcmc-vpn"
+readonly ETCMC_CONFIG_FILE="${ETCMC_CONFIG_DIR}/config"
+
+# Load the saved profile, if any.  Returns empty string when not set.
+function load_saved_profile() {
+  if [[ -f "${ETCMC_CONFIG_FILE}" ]]; then
+    local saved
+    saved="$(grep -E '^BLOCK_PROFILE=' "${ETCMC_CONFIG_FILE}" 2>/dev/null | cut -d= -f2 | tr -d '[:space:]')"
+    echo "${saved}"
+  fi
+}
+
+# Persist the chosen profile so re-installs/updates preserve it.
+function save_profile() {
+  local profile="$1"
+  mkdir -p "${ETCMC_CONFIG_DIR}"
+  # Write or replace the BLOCK_PROFILE line
+  if [[ -f "${ETCMC_CONFIG_FILE}" ]]; then
+    sed -i "s/^BLOCK_PROFILE=.*/BLOCK_PROFILE=${profile}/" "${ETCMC_CONFIG_FILE}"
+    if ! grep -q '^BLOCK_PROFILE=' "${ETCMC_CONFIG_FILE}"; then
+      echo "BLOCK_PROFILE=${profile}" >> "${ETCMC_CONFIG_FILE}"
+    fi
+  else
+    echo "BLOCK_PROFILE=${profile}" > "${ETCMC_CONFIG_FILE}"
+  fi
+  chmod 600 "${ETCMC_CONFIG_FILE}"
+}
+
+# Prompt the admin to choose a blocking profile (skipped on re-runs that already
+# have a saved profile, or if ETCMC_BLOCK_PROFILE is pre-set in the environment).
+function select_block_profile() {
+  # 1. Environment override (non-interactive / CI use)
+  if [[ -n "${ETCMC_BLOCK_PROFILE:-}" ]]; then
+    BLOCK_PROFILE="${ETCMC_BLOCK_PROFILE}"
+    echo "> Using blocking profile from environment: ${BLOCK_PROFILE}"
+    return
+  fi
+
+  # 2. Saved profile from a previous install — do not overwrite automatically
+  local saved
+  saved="$(load_saved_profile)"
+  if [[ -n "${saved}" ]]; then
+    BLOCK_PROFILE="${saved}"
+    echo "> Keeping existing blocking profile: ${BLOCK_PROFILE}"
+    return
+  fi
+
+  # 3. Interactive prompt
+  echo ""
+  echo "╔══════════════════════════════════════════════════════════════╗"
+  echo "║           ETCMCv2 VPN — Blocking Profile Selection          ║"
+  echo "╠══════════════════════════════════════════════════════════════╣"
+  echo "║  1) Light Block  — DNS malware filtering only.              ║"
+  echo "║                    Torrenting, P2P, IRC, SMTP all allowed.  ║"
+  echo "║                                                              ║"
+  echo "║  2) Medium Block — Blocks spam relay (SMTP) and SOCKS.      ║"
+  echo "║                    Torrenting and P2P are still allowed.    ║"
+  echo "║                                                              ║"
+  echo "║  3) Hard Block   — Full abuse prevention (recommended).     ║"
+  echo "║                    Blocks torrenting, P2P, SMTP, IRC,       ║"
+  echo "║                    eMule, Gnutella, and SOCKS.              ║"
+  echo "╚══════════════════════════════════════════════════════════════╝"
+  echo ""
+  echo -n "> Choose a blocking profile [1/2/3] (default: 3 Hard Block): "
+  local choice
+  read -r choice
+  case "${choice}" in
+    1) BLOCK_PROFILE="light"  ;;
+    2) BLOCK_PROFILE="medium" ;;
+    3) BLOCK_PROFILE="hard"   ;;
+    *)
+      echo "  No selection or unrecognised input — defaulting to Hard Block."
+      BLOCK_PROFILE="hard"
+      ;;
+  esac
+  echo "> Selected: ${BLOCK_PROFILE}"
+}
+
+# Applies server-side iptables rules matching the chosen BLOCK_PROFILE.
+# Rules are added to the FORWARD chain (traffic routed through the VPN server)
+# and survive container restarts. Re-running is idempotent via iptables -C checks.
 function apply_etcmc_firewall_rules() {
-  # Require iptables
   if ! command_exists iptables; then
     log_error "iptables not found — skipping abuse-prevention rules"
     return 0
   fi
 
-  # Helper: add rule only if it doesn't already exist
+  # Helper: add a rule only if it doesn't already exist
   function add_rule() {
     iptables -C "$@" 2>/dev/null || iptables -A "$@"
   }
 
-  # ── Block outbound SMTP (spam relay) ───────────────────────────────────────
-  add_rule FORWARD -p tcp --dport 25   -j DROP
-  add_rule FORWARD -p tcp --dport 465  -j DROP
-  add_rule FORWARD -p tcp --dport 587  -j DROP
+  local profile="${BLOCK_PROFILE:-hard}"
+  echo "  Applying iptables rules for profile: ${profile}"
 
-  # ── Block BitTorrent peer ports ────────────────────────────────────────────
-  add_rule FORWARD -p tcp --dport 6881:6889 -j DROP
-  add_rule FORWARD -p udp --dport 6881:6889 -j DROP
-  # BitTorrent tracker
-  add_rule FORWARD -p tcp --dport 6969 -j DROP
-  add_rule FORWARD -p udp --dport 6969 -j DROP
+  # ── Rules shared by medium and hard ──────────────────────────────────────
+  if [[ "${profile}" == "medium" || "${profile}" == "hard" ]]; then
+    # Block outbound SMTP (spam relay)
+    add_rule FORWARD -p tcp --dport 25  -j DROP
+    add_rule FORWARD -p tcp --dport 465 -j DROP
+    add_rule FORWARD -p tcp --dport 587 -j DROP
+    # Block SOCKS proxy abuse
+    add_rule FORWARD -p tcp --dport 1080 -j DROP
+  fi
 
-  # ── Block eMule / eDonkey P2P ──────────────────────────────────────────────
-  add_rule FORWARD -p tcp --dport 4662 -j DROP
-  add_rule FORWARD -p udp --dport 4672 -j DROP
+  # ── Rules exclusive to hard ───────────────────────────────────────────────
+  if [[ "${profile}" == "hard" ]]; then
+    # BitTorrent peer ports
+    add_rule FORWARD -p tcp --dport 6881:6889 -j DROP
+    add_rule FORWARD -p udp --dport 6881:6889 -j DROP
+    # BitTorrent tracker
+    add_rule FORWARD -p tcp --dport 6969 -j DROP
+    add_rule FORWARD -p udp --dport 6969 -j DROP
+    # eMule / eDonkey P2P
+    add_rule FORWARD -p tcp --dport 4662 -j DROP
+    add_rule FORWARD -p udp --dport 4672 -j DROP
+    # Gnutella / LimeWire P2P
+    add_rule FORWARD -p tcp --dport 6346 -j DROP
+    add_rule FORWARD -p tcp --dport 6347 -j DROP
+    # IRC (common botnet C2)
+    add_rule FORWARD -p tcp --dport 6667 -j DROP
+    add_rule FORWARD -p tcp --dport 6668 -j DROP
+    add_rule FORWARD -p tcp --dport 6669 -j DROP
+    add_rule FORWARD -p tcp --dport 6697 -j DROP
+  fi
 
-  # ── Block Gnutella / LimeWire ──────────────────────────────────────────────
-  add_rule FORWARD -p tcp --dport 6346 -j DROP
-  add_rule FORWARD -p tcp --dport 6347 -j DROP
-
-  # ── Block IRC (common botnet C2) ───────────────────────────────────────────
-  add_rule FORWARD -p tcp --dport 6667 -j DROP
-  add_rule FORWARD -p tcp --dport 6668 -j DROP
-  add_rule FORWARD -p tcp --dport 6669 -j DROP
-  add_rule FORWARD -p tcp --dport 6697 -j DROP
+  # ── light: nothing to add (DNS filtering is enforced by VPN client only) ──
 
   # ── Persist rules across reboots ──────────────────────────────────────────
   if command_exists iptables-save && command_exists netfilter-persistent; then
     netfilter-persistent save >/dev/null 2>&1 || true
   elif command_exists iptables-save; then
-    # Fallback: save to standard location used by iptables-restore on boot
     iptables-save > /etc/iptables/rules.v4 2>/dev/null || true
   fi
 }
@@ -513,6 +609,13 @@ install_shadowbox() {
     SB_DEFAULT_SERVER_NAME="${SB_DEFAULT_SERVER_NAME:-ETCMCv2 VPN Server}"
   fi
   export SB_DEFAULT_SERVER_NAME
+
+  # Select and persist the blocking profile.
+  # Existing saved profile is kept on re-runs; admin can override via
+  # ETCMC_BLOCK_PROFILE=light|medium|hard before re-running the script.
+  select_block_profile
+  save_profile "${BLOCK_PROFILE}"
+  export BLOCK_PROFILE
 
   log_for_sentry "Creating ETCMCv2 directory"
   export SHADOWBOX_DIR="${SHADOWBOX_DIR:-/opt/etcmc}"
@@ -580,6 +683,9 @@ install_shadowbox() {
   cat <<END_OF_SERVER_OUTPUT
 
 CONGRATULATIONS! Your ETCMCv2 VPN server is up and running.
+
+Blocking Profile: ${BLOCK_PROFILE}
+  (To change: re-run this script with ETCMC_BLOCK_PROFILE=light|medium|hard)
 
 STEP 1 — Add to Server Manager:
 Copy the following line (including curly brackets) into Step 2 of the
